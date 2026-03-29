@@ -1,9 +1,11 @@
-import { getBearerToken, validateJWT } from "../auth";
-import { respondWithJSON } from "./json";
-import { getVideo } from "../db/videos";
-import type { ApiConfig } from "../config";
-import type { BunRequest } from "bun";
-import { BadRequestError, NotFoundError } from "./errors";
+import {getBearerToken, validateJWT} from "../auth";
+import {respondWithJSON} from "./json";
+import {getVideo, updateVideo} from "../db/videos";
+import type {ApiConfig} from "../config";
+import type {BunRequest} from "bun";
+import {BadRequestError, NotFoundError, UserForbiddenError} from "./errors";
+import * as path from "node:path";
+import {mediaTypeToExt} from "./assets.ts";
 
 type Thumbnail = {
   data: ArrayBuffer;
@@ -42,12 +44,42 @@ export async function handlerUploadThumbnail(cfg: ApiConfig, req: BunRequest) {
     throw new BadRequestError("Invalid video ID");
   }
 
+  const formData = await req.formData();
+  const file = formData.get("thumbnail");
+
+  if (!(file instanceof File)) {
+    throw new BadRequestError("Thumbnail file missing");
+  }
+  const MAX_UPLOAD_SIZE = 10 << 20;
+  if (file.size > MAX_UPLOAD_SIZE) {
+    throw new BadRequestError("File too large");
+  }
+  const type = file.type;
+  const imageData = await file.arrayBuffer();
+  const ext = mediaTypeToExt(type);
+  const filePath = path.join(cfg.assetsRoot, `${videoId}${ext}`);
+  console.log(filePath);
+  await Bun.write(filePath, imageData);
+
+  const videoMetaData = getVideo(cfg.db, videoId);
+  if (!videoMetaData) {
+    throw new NotFoundError("video not found");
+  }
+
   const token = getBearerToken(req.headers);
   const userID = validateJWT(token, cfg.jwtSecret);
 
+
+  if (videoMetaData?.userID != userID) {
+    throw new UserForbiddenError("Not valid credentials");
+  }
   console.log("uploading thumbnail for video", videoId, "by user", userID);
 
   // TODO: implement the upload here
+  videoMetaData.thumbnailURL = `http://localhost:${cfg.port}/${filePath}`;
 
-  return respondWithJSON(200, null);
+  updateVideo(cfg.db, videoMetaData);
+
+
+  return respondWithJSON(200, videoMetaData);
 }
