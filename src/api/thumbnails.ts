@@ -55,10 +55,13 @@ export async function handlerUploadThumbnail(cfg: ApiConfig, req: BunRequest) {
     throw new BadRequestError("File too large");
   }
   const type = file.type;
+  if (type != "image/jpeg" && type != "image/png") {
+    throw new BadRequestError("Invalid file type");
+  }
+
   const imageData = await file.arrayBuffer();
   const ext = mediaTypeToExt(type);
   const filePath = path.join(cfg.assetsRoot, `${videoId}${ext}`);
-  console.log(filePath);
   await Bun.write(filePath, imageData);
 
   const videoMetaData = getVideo(cfg.db, videoId);
