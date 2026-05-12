@@ -5,7 +5,7 @@ import {type BunRequest, S3Client} from "bun";
 import {BadRequestError, NotFoundError, UserForbiddenError} from "./errors.ts";
 import {getUser} from "../db/users.ts";
 import {getBearerToken, validateJWT} from "../auth.ts";
-import {getVideo, updateVideo} from "../db/videos.ts";
+import {getVideo, updateVideo, type Video} from "../db/videos.ts";
 import {mediaTypeToExt} from "./assets.ts";
 import {randomBytes} from "crypto";
 import path from "node:path";
@@ -21,7 +21,7 @@ export async function handlerUploadVideo(cfg: ApiConfig, req: BunRequest) {
   const token = getBearerToken(req.headers);
   const userID = validateJWT(token, cfg.jwtSecret);
 
-  const videoMetaData = getVideo(cfg.db, videoId);
+  let videoMetaData = getVideo(cfg.db, videoId);
   if (!videoMetaData) {
     throw new NotFoundError("video not found");
   }
@@ -58,14 +58,13 @@ export async function handlerUploadVideo(cfg: ApiConfig, req: BunRequest) {
   const s3File = cfg.s3Client.file(videoKey, { bucket: cfg.s3Bucket});
   const localFile = Bun.file(processedVideoPath);
   await s3File.write(localFile, { type: "video/mp4"});
-
-  videoMetaData.videoURL = `https://${cfg.s3Bucket}.s3.${cfg.s3Region}.amazonaws.com/${videoKey}`;
+  videoMetaData.videoURL = `${cfg.s3CfDistribution}/${videoKey}`;
   updateVideo(cfg.db, videoMetaData);
 
   await rm(filePath, { force: true });
   await rm(processedVideoPath, { force: true });
 
-  return respondWithJSON(200, null);
+  return respondWithJSON(200, videoMetaData);
 }
 
 export async function getVideoAspectRatio(filepath: string) {
@@ -103,7 +102,15 @@ export async function processVideoForFastStart(inputFilePath: string) {
     "-map_metadata", "0",
     "-codec", "copy",
     "-f", "mp4",
+    "-y",
     outputFilePath]);
+
+  const code = await proc.exited;
+
+  if (code != 0)
+  {
+    throw new Error("ffmpeg failed");
+  }
 
   return outputFilePath;
 }
